@@ -40,7 +40,7 @@ Notes:
 
 ### Authoritative per-item seller prices
 
-Import `data/sql/db-world/mod_auctionhousebot_item_prices.sql`, then set these values in `mod_ahbot.conf`:
+Import `data/sql/db-world/mod_auctionhousebot_item_prices.sql`. The optional `mod_auctionhousebot_item_prices_phase2_seed.sql` file supplies the curated 18-item Phase 2 baseline. Then set these values in `mod_ahbot.conf`:
 
 ```ini
 AuctionHouseBot.ItemPriceTableMode = 1
