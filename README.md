@@ -38,6 +38,23 @@ Notes:
 - The account used does not need any security level and can be a player account.
 - The character used by the ahbot is not meant to be used ingame. If you use it to browse the auction house, you might have issues like "Searching for items..." displaying forever.
 
+### Authoritative per-item seller prices
+
+Import `data/sql/db-world/mod_auctionhousebot_item_prices.sql`, then set these values in `mod_ahbot.conf`:
+
+```ini
+AuctionHouseBot.ItemPriceTableMode = 1
+AuctionHouseBot.CurrentPhase = 2
+```
+
+Mode `1` is hybrid: a matching table row controls that item's seller price, bid percentage, stack limit, and maximum number of concurrent bot auctions. Unlisted items retain legacy pricing. Mode `2` is strict and only permits enabled table rows. Mode `0` disables the feature.
+
+Prices in `buyout_copper` are final per-unit buyouts. The quality and learned-market multipliers are not applied to them. A row with `enabled=0` explicitly prevents the item from being listed, including in hybrid mode. Auction-house `0` is the generic rule; a row for house `2`, `6`, or `7` overrides it for that house.
+
+`max_bot_auctions` counts concurrent listings from all configured bot characters in the affected auction house. It does not impose a cooldown after a sale. `force_include=1` lets a hybrid rule bypass legacy source, disabled-item, and whitelist filters; binding and other item-safety filters still apply. The buyer continues to use the legacy pricing path.
+
+Configuration reloads rebuild both the price-rule map and seller bins, so phase or enablement changes do not require deleting existing module data. Existing auctions are left to expire normally.
+
 ## Edit module configuration (optional)
 
 If you need to change the module configuration, go to your server configuration folder (where your `worldserver` or `worldserver.exe` is) in `modules` you will have to copy and rename (the copy) the file `mod_ahbot.conf.dist` to `mod_ahbot.conf` and edit it. This will change the overall behavior of the bot.

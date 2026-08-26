@@ -26,6 +26,23 @@
 
 #include "ObjectMgr.h"
 
+enum AHBItemPriceTableMode : uint32
+{
+    AHB_ITEM_PRICE_TABLE_OFF    = 0,
+    AHB_ITEM_PRICE_TABLE_HYBRID = 1,
+    AHB_ITEM_PRICE_TABLE_STRICT = 2
+};
+
+struct AHBItemPriceRule
+{
+    uint64 BuyoutCopper   = 0;
+    uint32 BidPercent     = 100;
+    uint32 MaxBotAuctions = 1;
+    uint32 MaxStack       = 1;
+    bool   Enabled        = false;
+    bool   ForceInclude   = false;
+};
+
 class AHBConfig
 {
 private:
@@ -150,6 +167,7 @@ private:
     std::map<uint32, uint32> itemsCount;
     std::map<uint32, uint64> itemsSum;
     std::map<uint32, uint64> itemsPrice;
+    std::map<uint32, AHBItemPriceRule> itemPriceRules;
 
     void   InitializeFromFile();
     void   InitializeFromSql(std::set<uint32> botsIds);
@@ -189,6 +207,8 @@ public:
     uint32 MarketResetThreshold;
     bool   ConsiderOnlyBotAuctions;
     uint32 ItemsPerCycle;
+    uint32 ItemPriceTableMode;
+    uint32 CurrentPhase;
 
     //
     // Filters
@@ -361,6 +381,11 @@ public:
 
     void   UpdateItemStats   (uint32 id, uint32 stackSize, uint64 buyout);
     uint64 GetItemPrice      (uint32 id);
+
+    AHBItemPriceRule const* GetItemPriceRule(uint32 id) const;
+    bool IsItemPriceTableEnabled() const;
+    bool IsItemPriceTableStrict() const;
+    bool HasEnabledItemPriceRules() const;
 };
 
 //

@@ -25,6 +25,7 @@
 #include "ItemTemplate.h"
 #include "Log.h"
 #include "ObjectMgr.h"
+#include "Player.h"
 #include "QueryResult.h"
 #include "WorldSession.h"
 
@@ -205,6 +206,8 @@ AHBConfig::AHBConfig(uint32 ahid, AHBConfig* conf)
     UseBuyPriceForSeller           = conf->UseBuyPriceForSeller;
     ConsiderOnlyBotAuctions        = conf->ConsiderOnlyBotAuctions;
     ItemsPerCycle                  = conf->ItemsPerCycle;
+    ItemPriceTableMode             = conf->ItemPriceTableMode;
+    CurrentPhase                   = conf->CurrentPhase;
     Vendor_Items                   = conf->Vendor_Items;
     Loot_Items                     = conf->Loot_Items;
     Other_Items                    = conf->Other_Items;
@@ -284,6 +287,8 @@ AHBConfig::AHBConfig(uint32 ahid, AHBConfig* conf)
     {
         SellerWhiteList.insert(id);
     }
+
+    itemPriceRules = conf->itemPriceRules;
 
     GreyTradeGoodsBin.clear();
     for (uint32 id: conf->GreyTradeGoodsBin)
@@ -513,6 +518,8 @@ void AHBConfig::Reset()
     SellAtMarketPrice              = false;
     ConsiderOnlyBotAuctions        = false;
     ItemsPerCycle                  = 200;
+    ItemPriceTableMode             = AHB_ITEM_PRICE_TABLE_OFF;
+    CurrentPhase                   = 1;
 
     Vendor_Items                   = false;
     Loot_Items                     = true;
@@ -599,6 +606,7 @@ void AHBConfig::Reset()
     itemsCount.clear();
     itemsSum.clear();
     itemsPrice.clear();
+    itemPriceRules.clear();
 }
 
 uint32 AHBConfig::GetAHID()
@@ -2046,6 +2054,45 @@ uint64 AHBConfig::GetItemPrice(uint32 id)
     return 0;
 }
 
+AHBItemPriceRule const* AHBConfig::GetItemPriceRule(uint32 id) const
+{
+    if (!IsItemPriceTableEnabled())
+    {
+        return nullptr;
+    }
+
+    std::map<uint32, AHBItemPriceRule>::const_iterator itr = itemPriceRules.find(id);
+    if (itr == itemPriceRules.end())
+    {
+        return nullptr;
+    }
+
+    return &itr->second;
+}
+
+bool AHBConfig::IsItemPriceTableEnabled() const
+{
+    return ItemPriceTableMode == AHB_ITEM_PRICE_TABLE_HYBRID || ItemPriceTableMode == AHB_ITEM_PRICE_TABLE_STRICT;
+}
+
+bool AHBConfig::IsItemPriceTableStrict() const
+{
+    return ItemPriceTableMode == AHB_ITEM_PRICE_TABLE_STRICT;
+}
+
+bool AHBConfig::HasEnabledItemPriceRules() const
+{
+    for (std::map<uint32, AHBItemPriceRule>::const_iterator itr = itemPriceRules.begin(); itr != itemPriceRules.end(); ++itr)
+    {
+        if (itr->second.Enabled)
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 void AHBConfig::Initialize(std::set<uint32> botsIds)
 {
     InitializeFromFile();
@@ -2079,6 +2126,20 @@ void AHBConfig::InitializeFromFile()
     ElapsingTimeClass              = sConfigMgr->GetOption<uint32>("AuctionHouseBot.ElapsingTimeClass"      , 1);
     ConsiderOnlyBotAuctions        = sConfigMgr->GetOption<bool>  ("AuctionHouseBot.ConsiderOnlyBotAuctions", false);
     ItemsPerCycle                  = sConfigMgr->GetOption<uint32>("AuctionHouseBot.ItemsPerCycle"          , 200);
+    ItemPriceTableMode             = sConfigMgr->GetOption<uint32>("AuctionHouseBot.ItemPriceTableMode"     , AHB_ITEM_PRICE_TABLE_OFF);
+    CurrentPhase                   = sConfigMgr->GetOption<uint32>("AuctionHouseBot.CurrentPhase"           , 1);
+
+    if (ItemPriceTableMode > AHB_ITEM_PRICE_TABLE_STRICT)
+    {
+        LOG_ERROR("module", "AHBot: invalid AuctionHouseBot.ItemPriceTableMode {}; falling back to off", ItemPriceTableMode);
+        ItemPriceTableMode = AHB_ITEM_PRICE_TABLE_OFF;
+    }
+
+    if (CurrentPhase == 0 || CurrentPhase > 4)
+    {
+        LOG_ERROR("module", "AHBot: invalid AuctionHouseBot.CurrentPhase {}; falling back to phase 1", CurrentPhase);
+        CurrentPhase = 1;
+    }
 
     //
     // Flags: item types
@@ -2166,6 +2227,8 @@ void AHBConfig::InitializeFromFile()
 
 void AHBConfig::InitializeFromSql(std::set<uint32> botsIds)
 {
+    itemPriceRules.clear();
+
     //
     // Load min and max items
     //
@@ -2513,6 +2576,91 @@ void AHBConfig::InitializeFromSql(std::set<uint32> botsIds)
         LOG_INFO("module", "Loaded {} items from the disabled item store", uint32(DisableItemStore.size()));
     }
 
+    //
+    // Load authoritative per-item seller prices for this phase and auction house.
+    // Generic rows (auctionhouse 0) are loaded first so an exact house row wins.
+    // Disabled and invalid rows remain in the map to prevent legacy fallback.
+    //
+
+    if (IsItemPriceTableEnabled())
+    {
+        QueryResult priceResults = WorldDatabase.Query(
+            "SELECT item_id, auctionhouse, enabled, buyout_copper, bid_pct, max_bot_auctions, max_stack, force_include "
+            "FROM mod_auctionhousebot_item_prices "
+            "WHERE phase = {} AND auctionhouse IN (0, {}) "
+            "ORDER BY auctionhouse ASC",
+            CurrentPhase, GetAHID());
+
+        if (priceResults)
+        {
+            do
+            {
+                Field* fields = priceResults->Fetch();
+                uint32 itemId = fields[0].Get<uint32>();
+                uint32 sourceAuctionHouse = fields[1].Get<uint8>();
+
+                AHBItemPriceRule rule;
+                rule.Enabled        = fields[2].Get<bool>();
+                rule.BuyoutCopper   = fields[3].Get<uint64>();
+                rule.BidPercent     = fields[4].Get<uint8>();
+                rule.MaxBotAuctions = fields[5].Get<uint16>();
+                rule.MaxStack       = fields[6].Get<uint16>();
+                rule.ForceInclude   = fields[7].Get<bool>();
+
+                if (rule.Enabled)
+                {
+                    bool valid = true;
+
+                    if (!sObjectMgr->GetItemTemplate(itemId))
+                    {
+                        LOG_ERROR("module", "AHBot: disabling item price rule for unknown item {} (phase {}, ah {})", itemId, CurrentPhase, sourceAuctionHouse);
+                        valid = false;
+                    }
+
+                    if (rule.BuyoutCopper == 0 || rule.BuyoutCopper > static_cast<uint64>(MAX_MONEY_AMOUNT))
+                    {
+                        LOG_ERROR("module", "AHBot: disabling item price rule for item {}: per-unit buyout {} is outside 1..{} copper", itemId, rule.BuyoutCopper, MAX_MONEY_AMOUNT);
+                        valid = false;
+                    }
+
+                    if (rule.BidPercent == 0 || rule.BidPercent > 100)
+                    {
+                        LOG_ERROR("module", "AHBot: disabling item price rule for item {}: bid_pct {} is outside 1..100", itemId, rule.BidPercent);
+                        valid = false;
+                    }
+
+                    if (!valid)
+                    {
+                        rule.Enabled = false;
+                    }
+                }
+
+                itemPriceRules[itemId] = rule;
+            } while (priceResults->NextRow());
+        }
+
+        uint32 enabledRules = 0;
+        uint32 disabledRules = 0;
+        for (std::map<uint32, AHBItemPriceRule>::const_iterator itr = itemPriceRules.begin(); itr != itemPriceRules.end(); ++itr)
+        {
+            if (itr->second.Enabled)
+            {
+                ++enabledRules;
+            }
+            else
+            {
+                ++disabledRules;
+            }
+        }
+
+        LOG_INFO("module", "AHBot: loaded {} enabled and {} disabled item price rules for phase {} and ah {}", enabledRules, disabledRules, CurrentPhase, GetAHID());
+
+        if (IsItemPriceTableStrict() && enabledRules == 0)
+        {
+            LOG_ERROR("module", "AHBot: strict item price mode has no enabled rules for phase {} and ah {}", CurrentPhase, GetAHID());
+        }
+    }
+
     // 
     // Reload the list of npc items
     // 
@@ -2614,10 +2762,42 @@ void AHBConfig::InitializeBins()
     // Exclude items depending on the configuration; whatever passes all the tests is put in the lists.
     //
 
+    GreyTradeGoodsBin.clear();
+    WhiteTradeGoodsBin.clear();
+    GreenTradeGoodsBin.clear();
+    BlueTradeGoodsBin.clear();
+    PurpleTradeGoodsBin.clear();
+    OrangeTradeGoodsBin.clear();
+    YellowTradeGoodsBin.clear();
+    GreyItemsBin.clear();
+    WhiteItemsBin.clear();
+    GreenItemsBin.clear();
+    BlueItemsBin.clear();
+    PurpleItemsBin.clear();
+    OrangeItemsBin.clear();
+    YellowItemsBin.clear();
+
     ItemTemplateContainer const* its = sObjectMgr->GetItemTemplateStore();
 
     for (ItemTemplateContainer::const_iterator itr = its->begin(); itr != its->end(); ++itr)
     {
+        AHBItemPriceRule const* itemPriceRule = GetItemPriceRule(itr->second.ItemId);
+
+        if (IsItemPriceTableEnabled())
+        {
+            if (itemPriceRule && !itemPriceRule->Enabled)
+            {
+                continue;
+            }
+
+            if (IsItemPriceTableStrict() && !itemPriceRule)
+            {
+                continue;
+            }
+        }
+
+        bool hasAuthoritativePrice = itemPriceRule && itemPriceRule->Enabled;
+        bool bypassLegacyEligibility = hasAuthoritativePrice && (itemPriceRule->ForceInclude || IsItemPriceTableStrict());
 
         //
         // Exclude items with the blocked binding type
@@ -2652,14 +2832,14 @@ void AHBConfig::InitializeBins()
         // Exclude items with no possible price
         //
 
-        if (UseBuyPriceForSeller)
+        if (!hasAuthoritativePrice && UseBuyPriceForSeller)
         {
             if (itr->second.BuyPrice == 0)
             {
                 continue;
             }
         }
-        else
+        else if (!hasAuthoritativePrice)
         {
             if (itr->second.SellPrice == 0)
             {
@@ -2671,7 +2851,7 @@ void AHBConfig::InitializeBins()
         // Exclude items with no costs associated, in any case
         //
 
-        if ((itr->second.BuyPrice == 0) && (itr->second.SellPrice == 0))
+        if (!hasAuthoritativePrice && (itr->second.BuyPrice == 0) && (itr->second.SellPrice == 0))
         {
             continue;
         }
@@ -2689,7 +2869,7 @@ void AHBConfig::InitializeBins()
         // Exclude trade goods items
         //
 
-        if (itr->second.Class == ITEM_CLASS_TRADE_GOODS)
+        if (!bypassLegacyEligibility && itr->second.Class == ITEM_CLASS_TRADE_GOODS)
         {
             bool isNpc   = false;
             bool isLoot  = false;
@@ -2736,7 +2916,7 @@ void AHBConfig::InitializeBins()
         // Exclude loot items
         //
 
-        if (itr->second.Class != ITEM_CLASS_TRADE_GOODS)
+        if (!bypassLegacyEligibility && itr->second.Class != ITEM_CLASS_TRADE_GOODS)
         {
             bool isNpc   = false;
             bool isLoot  = false;
@@ -2783,7 +2963,7 @@ void AHBConfig::InitializeBins()
         // Verify if the item is disabled or not in the whitelist
         //
 
-        if (SellerWhiteList.size() == 0)
+        if (!bypassLegacyEligibility && SellerWhiteList.size() == 0)
         {
             if (DisableItemStore.find(itr->second.ItemId) != DisableItemStore.end())
             {
@@ -2795,7 +2975,7 @@ void AHBConfig::InitializeBins()
                 continue;
             }
         }
-        else
+        else if (!bypassLegacyEligibility)
         {
             if (SellerWhiteList.find(itr->second.ItemId) == SellerWhiteList.end())
             {
@@ -3394,33 +3574,92 @@ void AHBConfig::InitializeBins()
     {
         if (DisableItemStore.size() == 0)
         {
-            LOG_ERROR("module", "AHBot: No items are disabled or in the whitelist! Selling will be disabled!");
+            if (IsItemPriceTableEnabled() && HasEnabledItemPriceRules())
+            {
+                if (!IsItemPriceTableStrict())
+                {
+                    auto retainManagedItems = [this](std::set<uint32>& bin)
+                    {
+                        for (std::set<uint32>::iterator itr = bin.begin(); itr != bin.end();)
+                        {
+                            AHBItemPriceRule const* rule = GetItemPriceRule(*itr);
+                            if (!rule || !rule->Enabled)
+                            {
+                                itr = bin.erase(itr);
+                            }
+                            else
+                            {
+                                ++itr;
+                            }
+                        }
+                    };
 
-            GreyTradeGoodsBin.clear();
-            WhiteTradeGoodsBin.clear();
-            GreenTradeGoodsBin.clear();
-            BlueTradeGoodsBin.clear();
-            PurpleTradeGoodsBin.clear();
-            OrangeTradeGoodsBin.clear();
-            YellowTradeGoodsBin.clear();
-            GreyItemsBin.clear();
-            WhiteItemsBin.clear();
-            GreenItemsBin.clear();
-            BlueItemsBin.clear();
-            PurpleItemsBin.clear();
-            OrangeItemsBin.clear();
-            YellowItemsBin.clear();
+                    retainManagedItems(GreyTradeGoodsBin);
+                    retainManagedItems(WhiteTradeGoodsBin);
+                    retainManagedItems(GreenTradeGoodsBin);
+                    retainManagedItems(BlueTradeGoodsBin);
+                    retainManagedItems(PurpleTradeGoodsBin);
+                    retainManagedItems(OrangeTradeGoodsBin);
+                    retainManagedItems(YellowTradeGoodsBin);
+                    retainManagedItems(GreyItemsBin);
+                    retainManagedItems(WhiteItemsBin);
+                    retainManagedItems(GreenItemsBin);
+                    retainManagedItems(BlueItemsBin);
+                    retainManagedItems(PurpleItemsBin);
+                    retainManagedItems(OrangeItemsBin);
+                    retainManagedItems(YellowItemsBin);
 
-            AHBSeller = false;
+                    LOG_WARN("module", "AHBot: no legacy disabled-item list or whitelist is configured; hybrid mode is restricted to authoritative price-table items");
+                }
+                else
+                {
+                    LOG_INFO("module", "AHBot: strict item price table is acting as the seller allowlist");
+                }
+            }
+            else
+            {
+                LOG_ERROR("module", "AHBot: No items are disabled or in the whitelist! Selling will be disabled!");
 
-            return;
+                GreyTradeGoodsBin.clear();
+                WhiteTradeGoodsBin.clear();
+                GreenTradeGoodsBin.clear();
+                BlueTradeGoodsBin.clear();
+                PurpleTradeGoodsBin.clear();
+                OrangeTradeGoodsBin.clear();
+                YellowTradeGoodsBin.clear();
+                GreyItemsBin.clear();
+                WhiteItemsBin.clear();
+                GreenItemsBin.clear();
+                BlueItemsBin.clear();
+                PurpleItemsBin.clear();
+                OrangeItemsBin.clear();
+                YellowItemsBin.clear();
+
+                AHBSeller = false;
+
+                return;
+            }
         }
-
-        LOG_INFO("module", "AHBot: {} disabled items", uint32(DisableItemStore.size()));
+        else
+        {
+            LOG_INFO("module", "AHBot: {} disabled items", uint32(DisableItemStore.size()));
+        }
     }
     else
     {
         LOG_INFO("module", "AHBot: Using a whitelist of {} items", uint32(SellerWhiteList.size()));
+    }
+
+    if (IsItemPriceTableStrict()
+        && GreyTradeGoodsBin.empty() && WhiteTradeGoodsBin.empty() && GreenTradeGoodsBin.empty()
+        && BlueTradeGoodsBin.empty() && PurpleTradeGoodsBin.empty() && OrangeTradeGoodsBin.empty()
+        && YellowTradeGoodsBin.empty() && GreyItemsBin.empty() && WhiteItemsBin.empty()
+        && GreenItemsBin.empty() && BlueItemsBin.empty() && PurpleItemsBin.empty()
+        && OrangeItemsBin.empty() && YellowItemsBin.empty())
+    {
+        LOG_ERROR("module", "AHBot: strict item price mode produced no sellable items for phase {} and ah {}; selling is disabled", CurrentPhase, GetAHID());
+        AHBSeller = false;
+        return;
     }
 
     LOG_INFO("module", "AHBot: loaded {} grey   trade goods", uint32(GreyTradeGoodsBin.size()));
