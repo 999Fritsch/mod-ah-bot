@@ -65,13 +65,13 @@
 #        Enabled rows always bypass vendor-price checks. In strict mode the
 #        table acts as the seller allowlist. In hybrid mode, force_include
 #        controls bypass of source, disabled-item, and whitelist filters.
-#    Default 0 (off)
+#    Default 2 (strict; complete Phase 2 catalog is authoritative)
 #
 #    AuctionHouseBot.CurrentPhase
 #        Selects the WotLK content phase from the per-item price table.
 #        Use 1 for Tier 7, 2 for Ulduar, 3 for Trial of the Crusader, and 4
 #        for Icecrown Citadel.
-#    Default 1
+#    Default 2
 #
 #    AuctionHouseBot.MarketResetThreshold
 #        How many auctions of the same item are necessary before the plain priceis adopted.
@@ -131,8 +131,8 @@ AuctionHouseBot.EnableBuyer = 0
 AuctionHouseBot.UseBuyPriceForSeller = 0
 AuctionHouseBot.UseBuyPriceForBuyer = 0
 AuctionHouseBot.UseMarketPriceForSeller = 0
-AuctionHouseBot.ItemPriceTableMode = 0
-AuctionHouseBot.CurrentPhase = 1
+AuctionHouseBot.ItemPriceTableMode = 2
+AuctionHouseBot.CurrentPhase = 2
 AuctionHouseBot.MarketResetThreshold = 25
 AuctionHouseBot.Account = 0
 AuctionHouseBot.GUID = 0

@@ -40,16 +40,22 @@ Notes:
 
 ### Authoritative per-item seller prices
 
-Import `data/sql/db-world/mod_auctionhousebot_item_prices.sql`. The optional `mod_auctionhousebot_item_prices_phase2_seed.sql` file supplies the curated 18-item Phase 2 baseline. Then set these values in `mod_ahbot.conf`:
+Import `data/sql/db-world/mod_auctionhousebot_item_prices.sql`, followed by `mod_auctionhousebot_item_prices_phase2_seed.sql`. The Phase 2 catalog is complete: it contains one generic rule for every one of the 46,096 official AzerothCore 3.3.5 item templates, plus exact faction-auction-house overrides where required. Legitimate Phase 2 market goods are enabled; later-phase, soulbound, promotional, event-only, test, and otherwise unsafe items are retained as explicit disabled rules instead of being omitted.
+
+The catalog is pinned to AzerothCore commit [`a1757524`](https://github.com/azerothcore/azerothcore-wotlk/commit/a175752440b31de34f1a8a1469f71d2d2c1ad994). Prices use archived April-June 2023 WotLK Classic auction observations where they are trustworthy, then vendor, crafting, conversion, category, and rarity floors. Thin-market outliers are capped, while curated raid-BoE, rare-mount, and collector-world-drop overrides take priority.
+
+Use these values in `mod_ahbot.conf` to make the table the seller's source of truth (they are also the supplied defaults):
 
 ```ini
-AuctionHouseBot.ItemPriceTableMode = 1
+AuctionHouseBot.ItemPriceTableMode = 2
 AuctionHouseBot.CurrentPhase = 2
 ```
 
-Mode `1` is hybrid: a matching table row controls that item's seller price, bid percentage, stack limit, and maximum number of concurrent bot auctions. Unlisted items retain legacy pricing. Mode `2` is strict and only permits enabled table rows. Mode `0` disables the feature.
+Mode `2` is strict: only enabled table rows may be listed, so new or custom item templates fail closed until an administrator adds a price rule. Mode `1` is hybrid: a matching table row is authoritative, while unlisted items retain legacy pricing. Mode `0` disables the feature.
 
 Prices in `buyout_copper` are final per-unit buyouts. The quality and learned-market multipliers are not applied to them. A row with `enabled=0` explicitly prevents the item from being listed, including in hybrid mode. Auction-house `0` is the generic rule; a row for house `2`, `6`, or `7` overrides it for that house.
+
+The supplied seed is a canonical Phase 2 replacement: importing it removes existing Phase 2 generic and house-specific rules before inserting the complete catalog. Back up any local Phase 2 overrides you intend to reapply.
 
 `max_bot_auctions` counts concurrent listings from all configured bot characters in the affected auction house. It does not impose a cooldown after a sale. `force_include=1` lets a hybrid rule bypass legacy source, disabled-item, and whitelist filters; binding and other item-safety filters still apply. The buyer continues to use the legacy pricing path.
 

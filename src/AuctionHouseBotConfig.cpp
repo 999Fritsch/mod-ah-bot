@@ -518,8 +518,8 @@ void AHBConfig::Reset()
     SellAtMarketPrice              = false;
     ConsiderOnlyBotAuctions        = false;
     ItemsPerCycle                  = 200;
-    ItemPriceTableMode             = AHB_ITEM_PRICE_TABLE_OFF;
-    CurrentPhase                   = 1;
+    ItemPriceTableMode             = AHB_ITEM_PRICE_TABLE_STRICT;
+    CurrentPhase                   = 2;
 
     Vendor_Items                   = false;
     Loot_Items                     = true;
@@ -2126,19 +2126,19 @@ void AHBConfig::InitializeFromFile()
     ElapsingTimeClass              = sConfigMgr->GetOption<uint32>("AuctionHouseBot.ElapsingTimeClass"      , 1);
     ConsiderOnlyBotAuctions        = sConfigMgr->GetOption<bool>  ("AuctionHouseBot.ConsiderOnlyBotAuctions", false);
     ItemsPerCycle                  = sConfigMgr->GetOption<uint32>("AuctionHouseBot.ItemsPerCycle"          , 200);
-    ItemPriceTableMode             = sConfigMgr->GetOption<uint32>("AuctionHouseBot.ItemPriceTableMode"     , AHB_ITEM_PRICE_TABLE_OFF);
-    CurrentPhase                   = sConfigMgr->GetOption<uint32>("AuctionHouseBot.CurrentPhase"           , 1);
+    ItemPriceTableMode             = sConfigMgr->GetOption<uint32>("AuctionHouseBot.ItemPriceTableMode"     , AHB_ITEM_PRICE_TABLE_STRICT);
+    CurrentPhase                   = sConfigMgr->GetOption<uint32>("AuctionHouseBot.CurrentPhase"           , 2);
 
     if (ItemPriceTableMode > AHB_ITEM_PRICE_TABLE_STRICT)
     {
-        LOG_ERROR("module", "AHBot: invalid AuctionHouseBot.ItemPriceTableMode {}; falling back to off", ItemPriceTableMode);
-        ItemPriceTableMode = AHB_ITEM_PRICE_TABLE_OFF;
+        LOG_ERROR("module", "AHBot: invalid AuctionHouseBot.ItemPriceTableMode {}; falling back to strict", ItemPriceTableMode);
+        ItemPriceTableMode = AHB_ITEM_PRICE_TABLE_STRICT;
     }
 
     if (CurrentPhase == 0 || CurrentPhase > 4)
     {
-        LOG_ERROR("module", "AHBot: invalid AuctionHouseBot.CurrentPhase {}; falling back to phase 1", CurrentPhase);
-        CurrentPhase = 1;
+        LOG_ERROR("module", "AHBot: invalid AuctionHouseBot.CurrentPhase {}; falling back to phase 2", CurrentPhase);
+        CurrentPhase = 2;
     }
 
     //
